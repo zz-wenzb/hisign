@@ -1,0 +1,57 @@
+package com.hisign.test;
+
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.util.Scanner;
+
+public class ReadBigTextFile
+{
+
+    public static void main(String[] args)
+    {
+        FileInputStream inputStream = null;
+        Scanner sc = null;
+        try {
+            inputStream = new FileInputStream("E:\\姓名频次.txt");
+            //inputStream = new FileInputStream("E:\\TXTTST\\李赟6.6万分已出.txt");
+            
+            sc = new Scanner(inputStream, "GBK");
+            while (sc.hasNextLine()) {
+                String line = sc.nextLine();
+                System.out.print(line + "\n");
+            }
+            // note that Scanner suppresses exceptions
+            if (sc.ioException() != null) {
+                throw sc.ioException();
+            }
+        }
+        catch (FileNotFoundException e)
+        {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+        catch (IOException e)
+        {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+        finally {
+            if (inputStream != null) {
+                try
+                {
+                    inputStream.close();
+                }
+                catch (IOException e)
+                {
+                    e.printStackTrace();
+                }
+            }
+            if (sc != null) {
+                sc.close();
+            }
+        }
+
+    }
+
+}

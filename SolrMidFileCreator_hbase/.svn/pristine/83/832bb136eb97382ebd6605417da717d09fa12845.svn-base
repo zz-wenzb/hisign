@@ -1,0 +1,98 @@
+package com.hisign.solr;
+
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+public class SenseManager
+{
+    private static BufferedWriter bufferWritter = null;
+    private static int bufferSize = 0;
+    
+    public static void openSenseFile()
+    {
+        String fileName = ModuleOptions.getSenseRoot();
+        if(fileName.endsWith("/"))
+        {
+            fileName += "senseFile.txt";
+        }
+        else
+        {
+            fileName += "/senseFile.txt";
+        }
+        
+        File file = new File(fileName);
+        if(file.exists())
+        {
+            Date nowTime = new Date();
+            SimpleDateFormat time=new SimpleDateFormat("MM_dd_HH_mm_ss"); 
+            time.format(nowTime); 
+            file.renameTo(new File(fileName + "_" + time.format(nowTime) + ".txt"));
+        }
+        
+        try
+        {
+            FileWriter fileWritter = new FileWriter(fileName, true);
+            bufferWritter = new BufferedWriter(fileWritter);
+        }
+        catch (IOException e)
+        {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+    }
+    
+    public static void putSenseLine(String strSenseInfo)
+    {
+        synchronized (ModuleOptions.synFileSense)
+        {
+            try
+            {
+                if(bufferSize > 0)
+                {
+                    bufferSize += 1;
+                    bufferWritter.write("\n");
+                }
+                bufferSize += strSenseInfo.getBytes().length;
+                bufferWritter.write(strSenseInfo);
+                bufferWritter.flush();
+                if(bufferSize > 5 * 1024 * 1024)
+                {
+                    bufferWritter.close();
+                    openSenseFile();
+                    bufferSize = 0;                   
+                }
+            }
+            catch (IOException e)
+            {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public static void closeSenseFile()
+    {
+        try
+        {
+            bufferWritter.close();
+        }
+        catch (IOException e)
+        {
+            e.printStackTrace();
+        }        
+    }
+    
+    public static boolean hasSensitive(String toCheck)
+    {
+        String check = "(广字|空字|海字|部队|兰字|南字|广字|成字|北字|沈字|济字|炮字|海司|二炮)+";
+        Pattern regex = Pattern.compile(check);
+        Matcher matcher = regex.matcher(toCheck);
+        return matcher.find();
+    }
+
+}

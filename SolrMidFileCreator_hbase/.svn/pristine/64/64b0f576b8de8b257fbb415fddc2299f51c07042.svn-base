@@ -1,0 +1,119 @@
+package com.hisign.solr;
+
+import java.sql.ResultSet;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+import com.mysql.jdbc.PreparedStatement;
+import com.mysql.jdbc.Statement;
+
+public class DispatchProcess
+{
+    private ExecutorService exeSvr = null;
+    
+    public void startThreadPool()
+    {
+        int threadCount = Runtime.getRuntime().availableProcessors() * 4;
+        exeSvr = Executors.newFixedThreadPool(threadCount);
+        /*exeSvr = Executors.newFixedThreadPool(1);*/
+    }  
+    
+    /*public boolean execute()
+    {
+        exeSvr.execute(new WorkThread("as", "dsd", "FJFJD", "E:\\DLDATA\\11月杂.xls"));
+        exeSvr.shutdown();
+        try
+        {
+            exeSvr.awaitTermination(5, TimeUnit.DAYS);
+        }
+        catch (InterruptedException e)
+        {
+            e.printStackTrace();
+        }
+        return true;
+    }*/
+    
+    public boolean execute()
+    {
+        boolean return_value = true;
+        List<DBItemContent> tmpItems = new ArrayList<DBItemContent>();
+        try
+        {
+            long startTime = System.currentTimeMillis();
+            synchronized (ModuleOptions.synDatabse)
+            {
+                MySQLManager.openDbConnection();                
+                Statement stmt = (Statement) MySQLManager.getDbConnection().createStatement();
+    
+                String sql = "SELECT id, data_ip, md5, file_path FROM "
+                        + "upload WHERE (flag=1 OR flag=4) AND server_ip='"
+                        + ModuleOptions.getProcessorIP()
+                        + "' AND md5 is NOT null ORDER BY ID limit 1000";
+                
+                ResultSet rs = stmt.executeQuery(sql);
+                if(rs.next())
+                {
+                    String recordID, mountPath, dataIP, md5;
+                    do
+                    {                    
+                        recordID = String.valueOf(rs.getInt(1));
+                        dataIP = rs.getString(2);
+                        md5 = rs.getString(3);
+                        mountPath = rs.getString(4);
+                        DBItemContent dbItem = new DBItemContent(recordID, mountPath, dataIP, md5);
+                        tmpItems.add(dbItem);
+                    }
+                    while (rs.next());
+                }
+                else
+                {
+                    System.out.println("current no unprocessed item in the database");
+                    return_value = false;
+                }
+    
+                rs.close();
+                stmt.close();
+                sql = "UPDATE upload set flag=4 "
+                        + "WHERE (flag=1 OR flag=4) AND server_ip='"
+                        + ModuleOptions.getProcessorIP()
+                        + "' AND md5 is NOT null ORDER BY ID limit 1000";
+                PreparedStatement pstam = (PreparedStatement) MySQLManager.getDbConnection().prepareStatement(sql);
+                pstam.executeUpdate();
+                
+                MySQLManager.closeDbConnection();                
+            }
+
+            System.out.println("Find " + tmpItems.size() + " file to process");
+            for(int i = 0; i < tmpItems.size(); ++i)
+            {
+                exeSvr.execute(new WorkThread(tmpItems.get(i)));
+            }
+            tmpItems.clear();
+            
+            exeSvr.shutdown();
+            try
+            {
+                exeSvr.awaitTermination(5, TimeUnit.DAYS);
+            }
+            catch (InterruptedException e)
+            {
+                e.printStackTrace();
+            }        
+            
+            double costTime = (System.currentTimeMillis() - startTime) / (double) 1000;
+            System.out.println("Processed "
+                            + (ModuleOptions.getSuccessCount() + ModuleOptions.getFailedCount())
+                            + " files, " + ModuleOptions.getSuccessCount() + " success, " + ModuleOptions.getFailedCount()
+                            + " failed, cost " + costTime + " seconds");
+        }
+        catch (Exception e)
+        {
+            e.printStackTrace();
+            return false;
+        }
+        return return_value;
+    }
+}

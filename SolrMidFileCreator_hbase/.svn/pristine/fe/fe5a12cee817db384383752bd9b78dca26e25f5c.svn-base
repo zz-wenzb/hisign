@@ -1,0 +1,171 @@
+package com.hisign.solr;
+
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+
+import org.apache.commons.collections.map.MultiValueMap;
+
+import com.hisign.solr.ModuleOptions;
+import com.mysql.jdbc.PreparedStatement;
+
+/**
+ * @brief multi process enroll will lead to solr server break down with this
+ *        object cache the file to be commit and reduce solr access count
+ * @author lukeleo
+ *
+ */
+public class SolrMiddleCache
+{
+    private static String fieldNames[] = {"wechatnum", "enginenum", "name",
+            "location", "organization", "company", "id", 
+            "mobilenum", "idnum", "affair", "goods", "md5",
+            "telenum", "bankcard", "email", "QQnum", "platenum",
+            "webaddr", "rawstr", "occupation", "content"};
+
+    public static void addFailedRecord(String recID)
+    {
+        updateFinished(recID, 3);
+    }
+
+    public static void createMiddleFileSeg(String recID, String md5, MultiValueMap segMap, int index, int groupCount)
+    {
+        String fileNameBase = ModuleOptions.getMiddleFileRoot();
+        if(fileNameBase.endsWith("/"))
+        {
+            fileNameBase += md5;
+        }
+        else
+        {
+            fileNameBase += ("/" + md5);
+        }
+        
+        File folder = new File(fileNameBase);
+        if(!folder.exists() || folder.isFile())
+        {   
+            folder.mkdir();
+        }
+        
+        if(groupCount > 0)
+        {
+            fileNameBase += ("/" + ((index % groupCount) + 1));
+            File folderSub = new File(fileNameBase);
+            if(!folderSub.exists() || folderSub.isFile())
+            {   
+                folderSub.mkdir();
+            }
+        }
+        
+        String fileName;
+        fileName = fileNameBase + "/" + (index + 1) + ".mid";
+        createSegFile(fileName, segMap);
+    }
+    
+    public static void updateFinished(String recID, int flag)
+    {
+        synchronized (ModuleOptions.synDatabse)
+        {
+            System.out.println("start to update id:" + recID);
+            try
+            {
+                MySQLManager.openDbConnection();
+                String sql = "UPDATE upload set flag = " + flag + " WHERE id=\'" + recID + "\'";
+                PreparedStatement pstam = (PreparedStatement) MySQLManager.getDbConnection().prepareStatement(sql);
+                pstam.executeUpdate();
+            }
+            catch(SQLException e)
+            {
+                e.printStackTrace();
+            }
+            finally
+            {
+                MySQLManager.closeDbConnection();
+            }
+            System.out.println("finished update id:" + recID);            
+        }
+    }
+    
+    public static void createMiddleFile(String recID, String md5, List<MultiValueMap> segMapList)
+    {
+        String fileNameBase = ModuleOptions.getMiddleFileRoot();
+        if(fileNameBase.endsWith("/"))
+        {
+            fileNameBase += md5;
+        }
+        else
+        {
+            fileNameBase += ("/" + md5);
+        }
+        
+        File folder = new File(fileNameBase);
+        if(!folder.exists() || folder.isFile())
+        {   
+            folder.mkdirs();
+        }
+        
+        int nSegCount = segMapList.size();
+        String fileName;
+        for(int index = 0; index < nSegCount; ++index)
+        {
+            fileName = fileNameBase + "/" + (index + 1) + ".mid";
+            MultiValueMap mapData = segMapList.get(index);
+            createSegFile(fileName, mapData);            
+        }
+        
+        updateFinished(recID, 2);
+    }
+
+    private static void createSegFile(String fileName, MultiValueMap mapData)
+    {
+        BufferedWriter bufferWritter = null;
+        try
+        {
+            FileWriter fileWritter = new FileWriter(fileName, true);
+            bufferWritter = new BufferedWriter(fileWritter);
+        }
+        catch (IOException e)
+        {
+            e.printStackTrace();
+        }        
+        
+        try
+        {
+            for(int outIndex = 0; outIndex < fieldNames.length; ++outIndex)
+            {
+                Collection<?> mapcoll = mapData.getCollection(fieldNames[outIndex]); 
+                if(mapcoll == null){
+                    continue;
+                }
+                bufferWritter.write(fieldNames[outIndex]);
+                // take @@@@ as key value separator
+                bufferWritter.write("@@@@");                    
+                Iterator<?> ii = mapcoll.iterator();
+                List<String> fildValue = new ArrayList<>();
+                while(ii.hasNext()){
+                    String value = (String) ii.next();
+                    if(!fildValue.contains(value))
+                    {
+                        bufferWritter.write(value);
+                        // take @&@ as value separator
+                        bufferWritter.write("@&@"); 
+                        fildValue.add(value);
+                    }
+                }                    
+                // take #@# as value separator
+                bufferWritter.write("#@#");                    
+            }
+            bufferWritter.flush();
+            bufferWritter.close();
+        }
+        catch (IOException e)
+        {
+            e.printStackTrace();
+        }        
+    }
+}

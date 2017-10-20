@@ -1,0 +1,123 @@
+package com.hisign.test;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.commons.collections.map.MultiValueMap;
+import org.apache.commons.io.FileUtils;
+
+import com.hankcs.hanlp.HanLP;
+import com.hankcs.hanlp.seg.Segment;
+import com.hankcs.hanlp.seg.common.Term;
+import com.hisign.solr.DataImportUtils;
+import com.hisign.solr.EncodingDetect;
+import com.hisign.solr.SenseManager;
+
+public class WorkFlowSimulate {
+    
+    private static final int MAX_SEG_SIZE = 10240;
+    
+	public static void main(String[] args) {	    
+		//File tst = new File("E:\\TXTTST\\李赟6.6万分已出.txt");
+		//String tsCon = DataImportUtils.fileToTxt(tst);
+		//System.out.println(tsCon);
+	    
+		String fileName = WorkFlowSimulate.class.getResource(
+                "/cresh01.xls").getPath();
+		        //"/cresh02.txt").getPath();
+		
+		File rootDir = new File("E:\\DLDATA");
+		File listFiles[] = rootDir.listFiles();
+		for(int index = 0; index < listFiles.length; ++index)
+		{
+		    if(listFiles[index].length() < 2)
+		    {
+		        continue;
+		    }
+		
+		    if(DataImportUtils.getExtensionName(listFiles[index].getName()).equalsIgnoreCase("txt"))
+		    {
+		        String fileEncode = EncodingDetect.getJavaEncode(listFiles[index].getAbsolutePath());
+	            String fileContent = "";
+		        try
+	            {
+	                fileContent = FileUtils.readFileToString(listFiles[index],fileEncode);
+	            }
+	            catch (IOException e)
+	            {
+	                e.printStackTrace();
+	                continue;
+	            }
+	            
+		        System.out.println(listFiles[index].getAbsolutePath());
+		        if(fileContent.length() < 60)
+		        {
+		            //System.out.println(listFiles[index].getAbsolutePath());
+		            System.out.println(fileContent);
+		        }
+		        else
+		        {
+		            System.out.println(fileContent.substring(0, 60));
+		        }
+		    }
+		}
+		
+		String fileContent = DataImportUtils.fileToTxt(
+				new File(fileName));
+		
+		int segIndex = 0;
+		try
+        {
+            Segment segment = HanLP.newSegment().enableAllNamedEntityRecognize(true).
+                    enableCustomDictionary(true).enableOffset(true).enableIndexMode(true).
+                    enablePartOfSpeechTagging(true);
+            
+            int endPos = 0;
+            List<MultiValueMap> segMapList = new ArrayList<>();
+            do
+            {
+                endPos = (fileContent.length() - (segIndex + 1) * MAX_SEG_SIZE) > 0 ?
+                        (segIndex + 1) * MAX_SEG_SIZE : fileContent.length();
+                        
+                String tmpContent =  fileContent.substring(segIndex * MAX_SEG_SIZE, endPos);
+                
+                if((tmpContent != null) && (tmpContent.length() > 0))
+                {
+                    // 查找过滤敏感词
+                    String tmpSegment[] = tmpContent.split("\n");
+                    StringBuffer filterSense = new StringBuffer();
+                    for(int index = 0; index < tmpSegment.length; ++index)
+                    {
+                        if(!SenseManager.hasSensitive(tmpSegment[index]))
+                        {
+                            if(filterSense.length() > 0)
+                            {
+                                filterSense.append("\n");
+                            }
+                            filterSense.append(tmpSegment[index]);
+                        }
+                    }
+                    
+                    String filterTabRet = filterSense.toString().replaceAll("\\t", " ");
+                    filterTabRet = filterTabRet.replaceAll("\\n", " ");
+                    List<Term> termList = segment.seg(filterTabRet);
+                    MultiValueMap segMap = DataImportUtils.extractNamingEntity(termList);
+                    segMapList.add(segMap);
+                    ++segIndex;
+                }
+                else
+                {
+                    System.out.println("Range======[" + segIndex * MAX_SEG_SIZE + ", " + endPos + " ]"); 
+                    break;
+                }
+            }            
+            while((fileContent.length() - endPos) > 0 );
+        }
+        catch(Exception e)
+        {
+            e.printStackTrace();
+        }        
+	}
+}

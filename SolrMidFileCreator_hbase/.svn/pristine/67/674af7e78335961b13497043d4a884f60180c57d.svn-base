@@ -1,0 +1,60 @@
+package com.hisign.solr;
+
+import java.text.SimpleDateFormat;
+import java.util.Date;
+
+import org.apache.commons.cli.*;
+
+public class MidFileCreator
+{
+    public static void main(String[] args) throws Exception
+    {
+        CommandLineParser parser = new BasicParser();
+        Options options = new Options();
+        options.addOption("c", "connection", true, "connection string to log in mysql");
+        options.addOption("p", "myip", true, "ip address of this machine");
+        options.addOption("s", "sensitive", true, "path to save sensitive info");
+        options.addOption("r", "root", true, "root address to save middle file");
+
+        CommandLine commandLine;
+        try
+        {
+            commandLine = parser.parse(options, args);
+            if (!commandLine.hasOption('c') || !commandLine.hasOption('r') ||
+                    !commandLine.hasOption('p') || !commandLine.hasOption('s'))
+            {
+                System.out.println("Insufficient input parameters");
+                System.exit(0);
+            } 
+            
+            ModuleOptions.setConnectString(commandLine.getOptionValue('c'));
+            ModuleOptions.setMiddleFileRoot(commandLine.getOptionValue('r'));
+            ModuleOptions.setProcessorIP(commandLine.getOptionValue('p'));
+            ModuleOptions.setSenseRoot(commandLine.getOptionValue('s'));
+            
+            if(!MySQLManager.initDBDriver())
+            {
+                System.out.println("falied to load mysql driver");
+                System.exit(0);                
+            }
+
+            SenseManager.openSenseFile();
+            DispatchProcess sp = new DispatchProcess();
+            do
+            { 
+                sp.startThreadPool();
+                Date now = new Date(); 
+                SimpleDateFormat dateFormat = new SimpleDateFormat("yyyyMMddHHmmss");
+                ModuleOptions.setGroupName(dateFormat.format( now ));
+            }
+            while(sp.execute());
+            SenseManager.closeSenseFile();
+            
+            System.exit(0);
+        }
+        catch (ParseException e)
+        {
+            e.printStackTrace();
+        }
+    }
+}

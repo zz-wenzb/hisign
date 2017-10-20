@@ -1,0 +1,238 @@
+package com.hisign.solr;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Scanner;
+
+import org.apache.commons.collections.map.MultiValueMap;
+
+import com.hankcs.hanlp.HanLP;
+import com.hankcs.hanlp.seg.Segment;
+import com.hankcs.hanlp.seg.common.Term;
+
+public class WorkThread implements Runnable
+{
+    private String fileMD5;
+    private String mountDir;
+    private String locationIP;
+    private String recordID;
+    
+    
+    /**
+     * max segment size to enroll solr (exceed this value will lead to poor
+     * query performance)
+     */
+    private static final int MAX_SEG_SIZE = 10240;
+    
+    public WorkThread(String recordID, String dataIP, String md5, String mountPath)
+    {
+        this.fileMD5 = md5;
+        this.mountDir = mountPath;
+        this.locationIP = dataIP;
+        this.recordID = recordID;
+    }
+    
+    public WorkThread(DBItemContent itemContent)
+    {
+        this.fileMD5 = itemContent.getMd5();
+        this.mountDir = itemContent.getMountPath();
+        this.locationIP = itemContent.getDataIP();
+        this.recordID = itemContent.getRecordID();
+    }
+    
+    public void run()
+    {
+        if (DataImportUtils.getExtensionName(mountDir).equalsIgnoreCase("txt") ||
+                DataImportUtils.getExtensionName(mountDir).equalsIgnoreCase("csv"))
+        {   // 这种方案用于解决大文本问题
+            IndexTextFile();
+        }
+        else
+        {
+            String fileContent = DataImportUtils.fileToTxt(new File(mountDir));
+            if (null == fileContent || 0 == fileContent.length())
+            {            
+                SolrMiddleCache.addFailedRecord(recordID);
+                ModuleOptions.increaseFailed();
+            }
+            else if(indexFileContent(fileContent))
+            {
+                ModuleOptions.increaseSuccess();
+            }
+            else
+            {
+                SolrMiddleCache.addFailedRecord(recordID);
+                ModuleOptions.increaseFailed();
+            }
+        }
+    }
+
+    private void IndexTextFile()
+    {
+        File file = new File(mountDir);
+        if(file.length() < 2)
+        {
+            SolrMiddleCache.addFailedRecord(recordID);
+            ModuleOptions.increaseFailed();
+            return;
+        }        
+        
+        FileInputStream inputStream = null;
+        Scanner scanner = null;
+        try
+        {
+            String fileEncode = EncodingDetect.getJavaEncode(file.getAbsolutePath());
+            inputStream = new FileInputStream(mountDir);            
+            scanner = new Scanner(inputStream, fileEncode);
+            StringBuffer filterSense = new StringBuffer();
+            int segIndex = 0;
+            long fileLength = file.length();
+            int groupCount = 0;
+            if(fileLength > 10 * 1024 * 1000)
+            {
+                groupCount = (int) (fileLength / (10 * 1024 * 1000) + 1);
+            }
+            while (scanner.hasNextLine())
+            {
+                String lineData = scanner.nextLine();
+                // note that Scanner suppresses exceptions
+                if (scanner.ioException() != null)
+                {
+                    System.out.println("Failed to scan file " + mountDir);
+                    throw scanner.ioException();
+                }
+                if(SenseManager.hasSensitive(lineData))
+                {
+                    SenseManager.putSenseLine(lineData);
+                    continue;
+                }
+                
+                if(filterSense.length() > 0)
+                {
+                    filterSense.append("\n");
+                }
+                filterSense.append(lineData);
+                
+                if(filterSense.length() < MAX_SEG_SIZE)
+                {
+                    continue;
+                }
+                
+                MultiValueMap segMap = NameingExtract(filterSense, segIndex++);
+                SolrMiddleCache.createMiddleFileSeg(recordID, fileMD5, segMap, segIndex, groupCount);
+                filterSense.delete(0, filterSense.length());
+            }
+            if(filterSense.length() > 0)
+            {                
+                MultiValueMap segMap = NameingExtract(filterSense, segIndex++);
+                SolrMiddleCache.createMiddleFileSeg(recordID, fileMD5, segMap, segIndex, groupCount);
+                filterSense.delete(0, filterSense.length());
+            }
+            SolrMiddleCache.updateFinished(recordID, 2);
+        }
+        catch (Exception e)
+        {
+            e.printStackTrace();
+            SolrMiddleCache.updateFinished(recordID, 3);
+        }
+        finally
+        {
+            if (inputStream != null)
+            {
+                try
+                {
+                    inputStream.close();
+                }
+                catch (IOException e)
+                {
+                    e.printStackTrace();
+                }
+            }
+            if (scanner != null)
+            {
+                scanner.close();
+            }
+        }
+    }
+
+    private MultiValueMap NameingExtract(StringBuffer filterSense, int segIndex)
+    {
+        Segment segment = HanLP.newSegment().enableAllNamedEntityRecognize(true).
+                enableCustomDictionary(true).enableOffset(true).enableIndexMode(true).
+                enablePartOfSpeechTagging(true);
+        
+        String filterTabRet = filterSense.toString().replaceAll("\\t", " ");
+        filterTabRet = filterTabRet.replaceAll("\\n", " ");
+        List<Term> termList = segment.seg(filterTabRet);
+        MultiValueMap segMap = DataImportUtils.extractNamingEntity(termList);
+        segMap.put("id", locationIP + ":" + mountDir + "_" + segIndex);
+        segMap.put("content", filterSense.toString());
+        segMap.put("md5", fileMD5);
+        
+        return segMap;        
+    }
+
+    private boolean indexFileContent(String fileContent)
+    {
+        if(fileContent.length() == 0)
+        {
+            return false;
+        }
+        
+        int segIndex = 0;        
+        try
+        {            
+            int endPos = 0;
+            List<MultiValueMap> segMapList = new ArrayList<>();
+            do
+            {
+                endPos = (fileContent.length() - (segIndex + 1) * MAX_SEG_SIZE) > 0 ?
+                        (segIndex + 1) * MAX_SEG_SIZE : fileContent.length();
+                        
+                String tmpContent =  fileContent.substring(segIndex * MAX_SEG_SIZE, endPos);
+                
+                if((tmpContent != null) && (tmpContent.length() > 0))
+                {
+                    // 查找过滤敏感词
+                    String tmpSegment[] = tmpContent.split("\n");
+                    StringBuffer filterSense = new StringBuffer();
+                    for(int index = 0; index < tmpSegment.length; ++index)
+                    {
+                        if(SenseManager.hasSensitive(tmpSegment[index]))
+                        {
+                            SenseManager.putSenseLine(tmpSegment[index]);
+                        }
+                        else
+                        {
+                            if(filterSense.length() > 0)
+                            {
+                                filterSense.append("\n");
+                            }
+                            filterSense.append(tmpSegment[index]);
+                        }
+                    }
+                    
+                    MultiValueMap segMap = NameingExtract(filterSense, segIndex++);
+                    segMapList.add(segMap);
+                }
+                else
+                {
+                    System.out.println("Range======[" + segIndex * MAX_SEG_SIZE + ", " + endPos + " ]"); 
+                    break;
+                }
+            }            
+            while((fileContent.length() - endPos) > 0 );
+            SolrMiddleCache.createMiddleFile(recordID, fileMD5, segMapList);
+        }
+        catch(Exception e)
+        {
+            e.printStackTrace();
+            return false;
+        }
+
+        return segIndex > 0;
+    }    
+}

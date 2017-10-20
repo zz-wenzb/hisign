@@ -1,0 +1,21 @@
+package com.hisign.test;
+
+import java.io.File;
+
+import com.hisign.solr.DataImportUtils;
+
+public class CreshFileTest
+{
+
+    public static void main(String[] args)
+    {
+        String fileName = CreshFileTest.class.getResource(
+                //"/%E5%8D%97%E6%B5%B7%E5%8C%BA%E6%95%99%E8%82%B2%E6%95%99%E5%AD%A6%E5%B0%8F%E8%AF%BE%E9%A2%98%E5%90%8D%E5%8D%95.xls").getPath();
+                "/Titelliste_neu_1.2.08.xls").getPath();
+        String fileContent = DataImportUtils.fileToTxt(
+                new File(fileName));
+        System.out.println(fileContent);
+
+    }
+
+}
